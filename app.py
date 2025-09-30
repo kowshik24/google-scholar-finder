@@ -2,7 +2,7 @@ import streamlit as st
 from scholarly import scholarly, ProxyGenerator
 from tavily import TavilyClient
 
-tavily_client = TavilyClient(api_key="tvly-YOUR_API_KEY")
+#tavily_client = TavilyClient(api_key="tvly-YOUR_API_KEY")
 
 # Set up a proxy to avoid getting blocked by Google Scholar
 # This is a good practice when scraping web data.
