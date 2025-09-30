@@ -1,0 +1,10 @@
+streamlit
+scholarly
+tavily-python
+llama_index
+langchain 
+html2text
+langchain-community
+requests
+beautifulsoup4
+selenium
