@@ -1,0 +1,6 @@
+# Azure App Service startup command configuration
+
+# For Streamlit apps on Azure App Service
+# Add this to Azure Portal → Configuration → General Settings → Startup Command
+
+python -m streamlit run app_azure.py --server.port=8000 --server.address=0.0.0.0 --server.headless=true
