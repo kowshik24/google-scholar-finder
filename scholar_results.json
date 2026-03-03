@@ -1,0 +1,163 @@
+{
+  "search_parameters": {
+    "query": "machine learning",
+    "date_range": "Since 2024",
+    "sort_by": "relevance"
+  },
+  "organic_results": [
+    {
+      "title": "Machine learning for microbiologists",
+      "authors": [
+        "F Asnicar",
+        "AM Thomas",
+        "A Passerini"
+      ],
+      "publication_info": ",, … - Nature Reviews …, 2024 - nature.com",
+      "snippet": "… how to evaluate a machine learning model and how … machine learning-based work. The \ntopics presented in this work will allow microbiologists to grasp the potential of machine learning …",
+      "result_url": "https://www.nature.com/articles/s41579-023-00984-1",
+      "cited_by": {
+        "count": 226,
+        "url": "https://scholar.google.com/scholar?cites=14777539729699644463&as_sdt=2005&sciodt=0,5&hl=en"
+      },
+      "related_articles_url": "https://scholar.google.com/scholar?q=related:LyT44hZeFM0J:scholar.google.com/&scioq=machine+learning&hl=en&as_sdt=0,5&as_ylo=2024",
+      "all_versions_url": "https://scholar.google.com/scholar?cluster=14777539729699644463&hl=en&as_sdt=0,5&as_ylo=2024",
+      "citations": {
+        "mla": "",
+        "apa": "",
+        "chicago": "",
+        "harvard": "",
+        "vancouver": ""
+      },
+      "user_profile_urls": [
+        "https://scholar.google.com/citations?user=ZbRfesUAAAAJ&hl=en&oi=sra",
+        "https://scholar.google.com/citations?user=dMThjQ8AAAAJ&hl=en&oi=sra",
+        "https://scholar.google.com/citations?user=IIXgkLoAAAAJ&hl=en&oi=sra"
+      ],
+      "position": 1
+    },
+    {
+      "title": "Designing nanotheranostics with machine learning",
+      "authors": [
+        "L Rao",
+        "Y Yuan",
+        "X Shen",
+        "G Yu",
+        "X Chen"
+      ],
+      "publication_info": ",,,, - Nature Nanotechnology, 2024 - nature.com",
+      "snippet": "… As a key branch of artificial intelligence, machine learning (ML) provides a set of tools \ncapable of performing time-consuming and result-perception tasks, thus offering unique …",
+      "result_url": "https://www.nature.com/articles/s41565-024-01753-8",
+      "cited_by": {
+        "count": 144,
+        "url": "https://scholar.google.com/scholar?cites=5417184452068128836&as_sdt=2005&sciodt=0,5&hl=en"
+      },
+      "related_articles_url": "https://scholar.google.com/scholar?q=related:RDhKxI60LUsJ:scholar.google.com/&scioq=machine+learning&hl=en&as_sdt=0,5&as_ylo=2024",
+      "all_versions_url": "https://scholar.google.com/scholar?cluster=5417184452068128836&hl=en&as_sdt=0,5&as_ylo=2024",
+      "citations": {
+        "mla": "",
+        "apa": "",
+        "chicago": "",
+        "harvard": "",
+        "vancouver": ""
+      },
+      "user_profile_urls": [
+        "https://scholar.google.com/citations?user=ml35-BQAAAAJ&hl=en&oi=sra",
+        "https://scholar.google.com/citations?user=9tI89HMAAAAJ&hl=en&oi=sra",
+        "https://scholar.google.com/citations?user=nKSXus4AAAAJ&hl=en&oi=sra",
+        "https://scholar.google.com/citations?user=6qP7mdIAAAAJ&hl=en&oi=sra",
+        "https://scholar.google.com/citations?user=_yF5knkAAAAJ&hl=en&oi=sra"
+      ],
+      "position": 2
+    },
+    {
+      "title": "Applications of machine learning to water resources management: A review of present status and future opportunities",
+      "authors": [
+        "AA Ahmed",
+        "A Abdoulhalik",
+        "S Moutari"
+      ],
+      "publication_info": ", S Sayed,, … - Journal of Cleaner …, 2024 - Elsevier",
+      "snippet": "… decades, machine learning tools have … on machine learning applications in water-related \nfields, this review paper presents for the first time a comprehensive review of machine learning …",
+      "result_url": "https://www.sciencedirect.com/science/article/pii/S0959652624001628",
+      "cited_by": {
+        "count": 204,
+        "url": "https://scholar.google.com/scholar?cites=5955702993531588857&as_sdt=2005&sciodt=0,5&hl=en"
+      },
+      "related_articles_url": "https://scholar.google.com/scholar?q=related:-VAuZVHoplIJ:scholar.google.com/&scioq=machine+learning&hl=en&as_sdt=0,5&as_ylo=2024",
+      "all_versions_url": "https://scholar.google.com/scholar?cluster=5955702993531588857&hl=en&as_sdt=0,5&as_ylo=2024",
+      "citations": {
+        "mla": "",
+        "apa": "",
+        "chicago": "",
+        "harvard": "",
+        "vancouver": ""
+      },
+      "user_profile_urls": [
+        "https://scholar.google.com/citations?user=Rf97K3YAAAAJ&hl=en&oi=sra",
+        "https://scholar.google.com/citations?user=yRPOTo8AAAAJ&hl=en&oi=sra",
+        "https://scholar.google.com/citations?user=3kbcF6UAAAAJ&hl=en&oi=sra"
+      ],
+      "position": 3
+    },
+    {
+      "title": "Machine learning for battery systems applications: Progress, challenges, and opportunities",
+      "authors": [
+        "Z Nozarijouybari",
+        "HK Fathy"
+      ],
+      "publication_info": ", - Journal of Power Sources, 2024 - Elsevier",
+      "snippet": "… Machine learning has emerged as a transformative force … Machine learning excels in its \nability to identify and capture … rich existing literature on battery machine learning into a structured …",
+      "result_url": "https://www.sciencedirect.com/science/article/pii/S0378775324002234",
+      "cited_by": {
+        "count": 107,
+        "url": "https://scholar.google.com/scholar?cites=3955238029940768042&as_sdt=2005&sciodt=0,5&hl=en"
+      },
+      "related_articles_url": "https://scholar.google.com/scholar?q=related:Kj28UAjU4zYJ:scholar.google.com/&scioq=machine+learning&hl=en&as_sdt=0,5&as_ylo=2024",
+      "all_versions_url": "https://www.sciencedirect.com/science/article/pii/S0378775324002234",
+      "citations": {
+        "mla": "",
+        "apa": "",
+        "chicago": "",
+        "harvard": "",
+        "vancouver": ""
+      },
+      "user_profile_urls": [
+        "https://scholar.google.com/citations?user=ei9_wZMAAAAJ&hl=en&oi=sra",
+        "https://scholar.google.com/citations?user=Fhll23AAAAAJ&hl=en&oi=sra"
+      ],
+      "position": 4
+    },
+    {
+      "title": "Pushing the frontiers in climate modelling and analysis with machine learning",
+      "authors": [
+        "V Eyring",
+        "WD Collins",
+        "P Gentine",
+        "EA Barnes"
+      ],
+      "publication_info": ",,, … - Nature Climate …, 2024 - nature.com",
+      "snippet": "… of machine learning beyond state-of-the-art approaches, not only by developing machine-learning-… \nUtilizing this potential requires key machine learning challenges to be addressed, in …",
+      "result_url": "https://www.nature.com/articles/s41558-024-02095-y",
+      "cited_by": {
+        "count": 174,
+        "url": "https://scholar.google.com/scholar?cites=10669345799524459352&as_sdt=2005&sciodt=0,5&hl=en"
+      },
+      "related_articles_url": "https://scholar.google.com/scholar?q=related:WCN23nkhEZQJ:scholar.google.com/&scioq=machine+learning&hl=en&as_sdt=0,5&as_ylo=2024",
+      "all_versions_url": "https://scholar.google.com/scholar?cluster=10669345799524459352&hl=en&as_sdt=0,5&as_ylo=2024",
+      "citations": {
+        "mla": "",
+        "apa": "",
+        "chicago": "",
+        "harvard": "",
+        "vancouver": ""
+      },
+      "user_profile_urls": [
+        "https://scholar.google.com/citations?user=Y3i87foAAAAJ&hl=en&oi=sra",
+        "https://scholar.google.com/citations?user=KOnzNo4AAAAJ&hl=en&oi=sra",
+        "https://scholar.google.com/citations?user=1KXRphAAAAAJ&hl=en&oi=sra",
+        "https://scholar.google.com/citations?user=zs-BY1sAAAAJ&hl=en&oi=sra"
+      ],
+      "position": 5
+    }
+  ]
+}

@@ -6,3 +6,4 @@ if [ -f app.pid ]; then
     echo "Streamlit app stopped"
 else
     echo "PID file not found"
+fi

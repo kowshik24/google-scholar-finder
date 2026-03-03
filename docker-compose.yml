@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # Google Scholar Scraper App (works standalone with ScraperAPI or FreeProxies)
+  scholar-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: google-scholar-scraper
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./output:/app/output
+      - ./.env:/app/.env:ro
+    environment:
+      - CONNECTION_METHOD=${CONNECTION_METHOD:-scraperapi}
+      - SCRAPERAPI_KEY=${SCRAPERAPI_KEY}
+    restart: unless-stopped
+
+  # OPTIONAL: Luminati Proxy Manager - only needed if using Bright Data
+  # Uncomment below to use
+  # luminati-proxy:
+  #   image: luminati/luminati-proxy
+  #   container_name: luminati-proxy-manager
+  #   command: >
+  #     proxy-manager
+  #     --token ${BRIGHTDATA_TOKEN}
+  #     --www_whitelist_ips "0.0.0.0/0"
+  #     --dropin
+  #     --dropin_port 22225
+  #     --ssl true
+  #   ports:
+  #     - "22999:22999"  # Web UI / Admin panel
+  #     - "22225:22225"  # Dropin proxy port
+  #     - "24000:24000"  # First configurable proxy
+  #   volumes:
+  #     - luminati-data:/root
+  #   environment:
+  #     - BRIGHTDATA_TOKEN=${BRIGHTDATA_TOKEN}
+  #   restart: unless-stopped
+
+# volumes:
+#   luminati-data:
+#     driver: local

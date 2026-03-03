@@ -1,59 +1,122 @@
 import streamlit as st
 from scholarly import scholarly, ProxyGenerator
-from tavily import TavilyClient
 import random
+import os
+import time
+import requests
+from bs4 import BeautifulSoup
+import re
+import traceback
+from urllib.parse import quote_plus
+from dotenv import load_dotenv
 
-#tavily_client = TavilyClient(api_key="tvly-YOUR_API_KEY")
+# --- Load environment variables from .env file ---
+load_dotenv()
+
+# --- Configuration from Environment Variables ---
+SCRAPERAPI_KEY = os.getenv('SCRAPERAPI_KEY', '')
+LUMINATI_USER = os.getenv('LUMINATI_USER', '')
+LUMINATI_PASS = os.getenv('LUMINATI_PASS', '')
+USE_FREE_PROXY_ONLY = os.getenv('USE_FREE_PROXY_ONLY', 'true').lower() == 'true'
+
+# --- Circuit Breaker State ---
+# Track proxy failures to skip consistently failing methods
+if 'proxy_failures' not in st.session_state:
+    st.session_state.proxy_failures = {
+        'free_proxies': {'count': 0, 'cooldown_until': 0},
+        'luminati': {'count': 0, 'cooldown_until': 0},
+        'scraperapi_proxy': {'count': 0, 'cooldown_until': 0},
+        'scraperapi_rest': {'count': 0, 'cooldown_until': 0},
+    }
+
+CIRCUIT_BREAKER_THRESHOLD = 3  # failures before cooldown
+CIRCUIT_BREAKER_COOLDOWN = 300  # 5 minutes cooldown
+
+def is_proxy_available(proxy_type: str) -> bool:
+    """Check if a proxy method is available (not in cooldown)"""
+    state = st.session_state.proxy_failures.get(proxy_type, {})
+    if state.get('count', 0) >= CIRCUIT_BREAKER_THRESHOLD:
+        if time.time() < state.get('cooldown_until', 0):
+            return False
+        # Reset after cooldown
+        st.session_state.proxy_failures[proxy_type] = {'count': 0, 'cooldown_until': 0}
+    return True
+
+def record_proxy_failure(proxy_type: str):
+    """Record a proxy failure for circuit breaker"""
+    state = st.session_state.proxy_failures.get(proxy_type, {'count': 0, 'cooldown_until': 0})
+    state['count'] = state.get('count', 0) + 1
+    if state['count'] >= CIRCUIT_BREAKER_THRESHOLD:
+        state['cooldown_until'] = time.time() + CIRCUIT_BREAKER_COOLDOWN
+        print(f"Circuit breaker tripped for {proxy_type}, cooldown until {state['cooldown_until']}")
+    st.session_state.proxy_failures[proxy_type] = state
+
+def record_proxy_success(proxy_type: str):
+    """Reset failure count on success"""
+    st.session_state.proxy_failures[proxy_type] = {'count': 0, 'cooldown_until': 0}
 
 # Set up a proxy to avoid getting blocked by Google Scholar
-# This is a good practice when scraping web data.
 def setup_proxy():
     try:
         pg = ProxyGenerator()
-        # Try multiple proxy methods
         success = False
+        proxy_type = None
         
-        # Try free proxies first
-        try:
-            success = pg.FreeProxies()
-            if success:
-                scholarly.use_proxy(pg)
-                print("Free proxy setup successful")
-                return True
-        except:
-            pass
+        # If USE_FREE_PROXY_ONLY is set, skip paid proxies
+        if not USE_FREE_PROXY_ONLY:
+            # Try ScraperAPI first (most reliable for Google Scholar)
+            if not success and SCRAPERAPI_KEY and is_proxy_available('scraperapi_proxy'):
+                try:
+                    success = pg.ScraperAPI(SCRAPERAPI_KEY)
+                    if success:
+                        scholarly.use_proxy(pg)
+                        print("ScraperAPI proxy setup successful")
+                        proxy_type = 'scraperapi_proxy'
+                        record_proxy_success('scraperapi_proxy')
+                        return True, 'scraperapi_proxy'
+                except Exception as e:
+                    print(f"ScraperAPI proxy failed: {e}")
+                    record_proxy_failure('scraperapi_proxy')
+            
+            # Try Luminati proxy if ScraperAPI fails
+            if not success and LUMINATI_USER and LUMINATI_PASS and is_proxy_available('luminati'):
+                try:
+                    success = pg.Luminati(usr=LUMINATI_USER, passwd=LUMINATI_PASS, port=22225)
+                    if success:
+                        scholarly.use_proxy(pg)
+                        print("Luminati proxy setup successful")
+                        proxy_type = 'luminati'
+                        record_proxy_success('luminati')
+                        return True, 'luminati'
+                except Exception as e:
+                    print(f"Luminati proxy failed: {e}")
+                    record_proxy_failure('luminati')
+        else:
+            print("Using free proxy only mode (USE_FREE_PROXY_ONLY=true)")
         
-        # Try Luminati proxy if free proxies fail
-        if not success:
+        # Try free proxies
+        if not success and is_proxy_available('free_proxies'):
             try:
-                success = pg.Luminati(usr="", passwd="", port=22225)
+                success = pg.FreeProxies()
                 if success:
                     scholarly.use_proxy(pg)
-                    print("Luminati proxy setup successful")
-                    return True
-            except:
-                pass
-        
-        # Try ScraperAPI if other methods fail
-        if not success:
-            try:
-                success = pg.ScraperAPI("")
-                if success:
-                    scholarly.use_proxy(pg)
-                    print("ScraperAPI proxy setup successful")
-                    return True
-            except:
-                pass
+                    print("Free proxy setup successful")
+                    proxy_type = 'free_proxies'
+                    record_proxy_success('free_proxies')
+                    return True, 'free_proxies'
+            except Exception as e:
+                print(f"Free proxies failed: {e}")
+                record_proxy_failure('free_proxies')
         
         print("All proxy methods failed, proceeding without proxy")
-        return False
+        return False, None
         
     except Exception as e:
         print(f"Proxy setup failed: {e}. Proceeding without proxy.")
-        return False
+        return False, None
 
 # Initialize proxy
-proxy_setup_success = setup_proxy()
+proxy_setup_success, active_proxy_type = setup_proxy()
 
 def clear_scholarly_cache():
     """Clear any cached data that might be causing issues"""
@@ -66,6 +129,12 @@ def clear_scholarly_cache():
     except Exception as e:
         print(f"Failed to clear cache: {e}")
 
+def clear_results_cache():
+    """Clear the results cache to force fresh data"""
+    if 'results_cache' in st.session_state:
+        st.session_state.results_cache = {}
+    print("Results cache cleared")
+
 def test_connection():
     """Test if we can connect to Google Scholar"""
     try:
@@ -76,127 +145,207 @@ def test_connection():
         print(f"Connection test failed: {e}")
         return False
 
-def fetch_scholar_data_alternative(author_id, start_year, end_year):
+def get_with_scraperapi(url: str, timeout: int = 60) -> requests.Response:
     """
-    Alternative method to fetch author data using direct web scraping approach
+    Fetch a URL using ScraperAPI REST API (more reliable than proxy mode)
+    """
+    if not SCRAPERAPI_KEY:
+        raise ValueError("SCRAPERAPI_KEY not configured")
+    
+    if not is_proxy_available('scraperapi_rest'):
+        raise RuntimeError("ScraperAPI REST is in cooldown due to repeated failures")
+    
+    api_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={quote_plus(url)}"
+    
+    try:
+        response = requests.get(api_url, timeout=timeout)
+        if response.status_code == 200:
+            record_proxy_success('scraperapi_rest')
+        else:
+            record_proxy_failure('scraperapi_rest')
+        return response
+    except Exception as e:
+        record_proxy_failure('scraperapi_rest')
+        raise
+
+def exponential_backoff(attempt: int, base: float = 2.0, max_delay: float = 60.0) -> float:
+    """Calculate exponential backoff delay with jitter"""
+    delay = min(max_delay, (base ** attempt) + random.uniform(0, 1))
+    return delay
+
+def fetch_page_with_fallback(url: str, headers: dict = None) -> requests.Response:
+    """
+    Fetch a page with multiple fallback methods:
+    1. ScraperAPI REST API (most reliable)
+    2. Direct request with headers
+    """
+    default_headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    }
+    headers = headers or default_headers
+    
+    # Try ScraperAPI REST API first (most reliable)
+    if SCRAPERAPI_KEY and is_proxy_available('scraperapi_rest'):
+        try:
+            st.write("Using ScraperAPI REST API...")
+            response = get_with_scraperapi(url, timeout=60)
+            if response.status_code == 200:
+                return response
+            else:
+                st.warning(f"ScraperAPI returned status {response.status_code}, trying direct request...")
+        except Exception as e:
+            st.warning(f"ScraperAPI failed: {e}, trying direct request...")
+    
+    # Fallback to direct request
+    time.sleep(random.uniform(2, 4))
+    return requests.get(url, headers=headers, timeout=30)
+
+def fetch_scholar_data_alternative(author_id, start_year, end_year, max_pages=5):
+    """
+    Alternative method to fetch author data using direct web scraping approach.
+    Supports pagination to fetch more than the first page of publications.
+    Uses ScraperAPI REST API when available for better reliability.
     """
     try:
-        import requests
-        from bs4 import BeautifulSoup
-        import time
-        import random
-        import re
-        
         st.write("Trying alternative web scraping method...")
         
-        # Construct the Google Scholar URL
-        url = f"https://scholar.google.com/citations?user={author_id}&hl=en"
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        }
-        
-        # Add random delay to avoid being blocked
-        time.sleep(random.uniform(2, 4))
-        
-        response = requests.get(url, headers=headers, timeout=30)
-        
-        if response.status_code != 200:
-            st.error(f"Failed to fetch author page. Status code: {response.status_code}")
-            return None
-            
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # Check if author exists
-        if "not found" in response.text.lower() or "profile not found" in response.text.lower():
-            st.error("Author profile not found. Please verify the author ID.")
-            return None
-        
-        st.write("Author page found, extracting publications...")
-        
-        # Extract author name
-        author_name = "Unknown Author"
-        name_elem = soup.find('div', {'id': 'gsc_prf_in'})
-        if name_elem:
-            author_name = name_elem.get_text(strip=True)
-        
-        st.write(f"Author: {author_name}")
-        
-        # Find publications in the page
         publications = []
+        page_start = 0
+        page_size = 100  # Google Scholar default
+        consecutive_empty_pages = 0
+        found_older_than_range = False
         
-        # Look for publication entries
-        pub_rows = soup.find_all('tr', class_='gsc_a_tr')
-        
-        if not pub_rows:
-            # Try alternative selectors
-            pub_rows = soup.find_all('div', class_='gsc_a_tr')
-        
-        st.write(f"Found {len(pub_rows)} publication entries on the page")
-        
-        for i, row in enumerate(pub_rows):
-            try:
-                # Extract title
-                title_elem = row.find('a', class_='gsc_a_at')
-                if not title_elem:
-                    title_elem = row.find('a')
+        for page_num in range(max_pages):
+            # Construct the Google Scholar URL with pagination
+            url = f"https://scholar.google.com/citations?user={author_id}&hl=en&cstart={page_start}&pagesize={page_size}"
+            
+            if page_num > 0:
+                st.write(f"Fetching page {page_num + 1}...")
+            
+            response = fetch_page_with_fallback(url)
+            
+            if response.status_code != 200:
+                if page_num == 0:
+                    st.error(f"Failed to fetch author page. Status code: {response.status_code}")
+                    return None
+                else:
+                    # Stop pagination if we get an error on subsequent pages
+                    break
                 
-                if not title_elem:
-                    continue
-                    
-                title = title_elem.get_text(strip=True)
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Check if author exists (only on first page)
+            if page_num == 0:
+                if "not found" in response.text.lower() or "profile not found" in response.text.lower():
+                    st.error("Author profile not found. Please verify the author ID.")
+                    return None
                 
-                # Extract year
-                year_elem = row.find('span', class_='gsc_a_y')
-                year = None
-                if year_elem:
-                    year_text = year_elem.get_text(strip=True)
-                    year_match = re.search(r'\d{4}', year_text)
-                    if year_match:
-                        year = int(year_match.group())
-                
-                # Skip if year is not in range
-                if year and (year < start_year or year > end_year):
-                    continue
-                
-                # Extract authors (if available)
-                authors_elem = row.find('div', class_='gs_gray')
-                authors = authors_elem.get_text(strip=True) if authors_elem else "Unknown authors"
-                
-                # Extract citation count
-                citations_elem = row.find('a', class_='gsc_a_c')
-                citations = 0
-                if citations_elem:
-                    cite_text = citations_elem.get_text(strip=True)
-                    if cite_text and cite_text != '-':
-                        citations = int(re.sub(r'[^\d]', '', cite_text)) if re.sub(r'[^\d]', '', cite_text) else 0
-                
-                # Create publication object similar to scholarly format
-                pub = {
-                    'bib': {
-                        'title': title,
-                        'pub_year': str(year) if year else 'Unknown',
-                        'author': authors,
-                        'citation_count': citations
-                    },
-                    'pub_url': title_elem.get('href', '') if title_elem else '',
-                    'num_citations': citations
-                }
-                
-                publications.append(pub)
-                
-                # Add progress indicator
-                if (i + 1) % 10 == 0:
-                    st.write(f"Processed {i + 1} publications...")
-                    
-            except Exception as pub_error:
-                st.warning(f"Skipping publication {i + 1} due to error: {pub_error}")
+                # Extract author name
+                author_name = "Unknown Author"
+                name_elem = soup.find('div', {'id': 'gsc_prf_in'})
+                if name_elem:
+                    author_name = name_elem.get_text(strip=True)
+                st.write(f"Author: {author_name}")
+            
+            # Find publications in the page
+            pub_rows = soup.find_all('tr', class_='gsc_a_tr')
+            
+            if not pub_rows:
+                pub_rows = soup.find_all('div', class_='gsc_a_tr')
+            
+            if not pub_rows:
+                consecutive_empty_pages += 1
+                if consecutive_empty_pages >= 2:
+                    break  # Stop if we get 2 empty pages in a row
                 continue
+            
+            consecutive_empty_pages = 0
+            page_pubs_in_range = 0
+            
+            if page_num == 0:
+                st.write(f"Found {len(pub_rows)} publication entries on the page")
+            
+            for i, row in enumerate(pub_rows):
+                try:
+                    # Extract title
+                    title_elem = row.find('a', class_='gsc_a_at')
+                    if not title_elem:
+                        title_elem = row.find('a')
+                    
+                    if not title_elem:
+                        continue
+                        
+                    title = title_elem.get_text(strip=True)
+                    
+                    # Extract year
+                    year_elem = row.find('span', class_='gsc_a_y')
+                    year = None
+                    if year_elem:
+                        year_text = year_elem.get_text(strip=True)
+                        year_match = re.search(r'\d{4}', year_text)
+                        if year_match:
+                            year = int(year_match.group())
+                    
+                    # Track if we've gone past our date range (for early termination)
+                    if year and year < start_year:
+                        found_older_than_range = True
+                    
+                    # Skip if year is not in range
+                    if year and (year < start_year or year > end_year):
+                        continue
+                    
+                    page_pubs_in_range += 1
+                    
+                    # Extract authors (if available)
+                    authors_elem = row.find('div', class_='gs_gray')
+                    authors = authors_elem.get_text(strip=True) if authors_elem else "Unknown authors"
+                    
+                    # Extract citation count
+                    citations_elem = row.find('a', class_='gsc_a_c')
+                    citations = 0
+                    if citations_elem:
+                        cite_text = citations_elem.get_text(strip=True)
+                        if cite_text and cite_text != '-':
+                            citations = int(re.sub(r'[^\d]', '', cite_text)) if re.sub(r'[^\d]', '', cite_text) else 0
+                    
+                    # Create publication object similar to scholarly format
+                    pub = {
+                        'bib': {
+                            'title': title,
+                            'pub_year': str(year) if year else 'Unknown',
+                            'author': authors,
+                            'citation_count': citations
+                        },
+                        'pub_url': title_elem.get('href', '') if title_elem else '',
+                        'num_citations': citations
+                    }
+                    
+                    publications.append(pub)
+                        
+                except Exception as pub_error:
+                    continue
+            
+            # Progress update
+            total_pubs = len(publications)
+            if total_pubs > 0 and page_num > 0:
+                st.write(f"Found {total_pubs} publications in range so far...")
+            
+            # Early termination: if all publications on this page are older than start_year
+            if found_older_than_range and page_pubs_in_range == 0:
+                st.write("Reached publications older than the specified range, stopping pagination.")
+                break
+            
+            # Move to next page
+            page_start += page_size
+            
+            # Rate limiting between pages
+            if page_num < max_pages - 1 and len(pub_rows) > 0:
+                time.sleep(random.uniform(1, 2))
         
         # Sort papers by year in descending order (most recent first)
         publications.sort(key=lambda x: int(x['bib'].get('pub_year', 0)) if x['bib'].get('pub_year', '').isdigit() else 0, reverse=True)
@@ -210,20 +359,57 @@ def fetch_scholar_data_alternative(author_id, start_year, end_year):
         
     except Exception as e:
         st.error(f"Alternative method failed: {e}")
-        import traceback
         st.error(f"Technical details: {traceback.format_exc()}")
         return None
 
-def fetch_scholar_data(author_id, start_year, end_year):
+def get_cache_key(author_id: str, start_year: int, end_year: int, method: str) -> str:
+    """Generate a cache key for the results"""
+    return f"{author_id}_{start_year}_{end_year}_{method}"
+
+def get_cached_results(cache_key: str):
+    """Get results from session state cache"""
+    if 'results_cache' not in st.session_state:
+        st.session_state.results_cache = {}
+    
+    cached = st.session_state.results_cache.get(cache_key)
+    if cached:
+        # Check if cache is still valid (1 hour TTL)
+        if time.time() - cached.get('timestamp', 0) < 3600:
+            return cached.get('data')
+        else:
+            # Cache expired, remove it
+            del st.session_state.results_cache[cache_key]
+    return None
+
+def set_cached_results(cache_key: str, data):
+    """Store results in session state cache"""
+    if 'results_cache' not in st.session_state:
+        st.session_state.results_cache = {}
+    
+    st.session_state.results_cache[cache_key] = {
+        'data': data,
+        'timestamp': time.time()
+    }
+
+def fetch_scholar_data(author_id, start_year, end_year, use_cache=True):
     """
     Fetches paper titles and abstracts for a given Google Scholar author ID and time frame.
+    Uses caching and exponential backoff for better reliability.
     """
+    # Check cache first
+    cache_key = get_cache_key(author_id, start_year, end_year, 'scholarly')
+    if use_cache:
+        cached = get_cached_results(cache_key)
+        if cached:
+            st.success(f"✅ Loaded {len(cached)} papers from cache!")
+            return cached
+    
     try:
         st.write(f"Fetching data for author ID: {author_id}...")
         
         # First, try the scholarly library with enhanced error handling
         author = None
-        max_retries = 3
+        max_retries = 5  # Increased from 3
         
         for attempt in range(max_retries):
             try:
@@ -241,19 +427,22 @@ def fetch_scholar_data(author_id, start_year, end_year):
                 else:
                     st.warning(f"Attempt {attempt + 1} returned None or invalid data. Retrying...")
                     if attempt < max_retries - 1:
-                        import time
-                        time.sleep(random.uniform(2, 5))  # Random delay between retries
+                        delay = exponential_backoff(attempt)
+                        st.write(f"Waiting {delay:.1f}s before retry...")
+                        time.sleep(delay)
                         
             except AttributeError as attr_error:
                 st.warning(f"Attempt {attempt + 1} failed with AttributeError: {attr_error}")
                 if attempt < max_retries - 1:
-                    import time
-                    time.sleep(random.uniform(2, 5))
+                    delay = exponential_backoff(attempt)
+                    st.write(f"Waiting {delay:.1f}s before retry...")
+                    time.sleep(delay)
             except Exception as retry_error:
                 st.warning(f"Attempt {attempt + 1} failed: {retry_error}")
                 if attempt < max_retries - 1:
-                    import time
-                    time.sleep(random.uniform(2, 5))
+                    delay = exponential_backoff(attempt)
+                    st.write(f"Waiting {delay:.1f}s before retry...")
+                    time.sleep(delay)
         
         if author is None or not isinstance(author, dict):
             st.error("❌ Failed to retrieve author profile with scholarly library.")
@@ -279,23 +468,37 @@ def fetch_scholar_data(author_id, start_year, end_year):
             st.error("No publications found for this author.")
             return None
         
-        papers = []
-        st.write(f"Processing {len(author['publications'])} publications...")
+        # First pass: filter by year WITHOUT fetching full details
+        matching_pubs = []
+        st.write(f"Scanning {len(author['publications'])} publications for year range...")
         
-        for i, pub in enumerate(author['publications']):
+        for pub in author['publications']:
             try:
-                # Check if the paper has a 'pub_year' and if it's within the specified range
-                if ('bib' in pub and 'pub_year' in pub['bib'] and 
-                    start_year <= int(pub['bib']['pub_year']) <= end_year):
+                if 'bib' in pub and 'pub_year' in pub['bib']:
+                    pub_year = int(pub['bib']['pub_year'])
+                    if start_year <= pub_year <= end_year:
+                        matching_pubs.append(pub)
+            except (ValueError, TypeError):
+                continue
+        
+        st.write(f"Found {len(matching_pubs)} publications in date range, fetching details...")
+        
+        # Second pass: fetch full details only for matching publications
+        papers = []
+        for i, pub in enumerate(matching_pubs):
+            try:
+                # Fill the publication to get more details like the abstract
+                filled_pub = scholarly.fill(pub)
+                if filled_pub and 'bib' in filled_pub:
+                    papers.append(filled_pub)
                     
-                    # Fill the publication to get more details like the abstract
-                    filled_pub = scholarly.fill(pub)
-                    if filled_pub and 'bib' in filled_pub:
-                        papers.append(filled_pub)
-                    
-                # Add progress indicator for large numbers of publications
-                if (i + 1) % 10 == 0:
-                    st.write(f"Processed {i + 1} publications...")
+                # Add progress indicator
+                if (i + 1) % 5 == 0:
+                    st.write(f"Fetched details for {i + 1}/{len(matching_pubs)} publications...")
+                
+                # Rate limiting between fill() calls
+                if i < len(matching_pubs) - 1:
+                    time.sleep(random.uniform(0.5, 1.5))
                     
             except Exception as pub_error:
                 st.warning(f"Skipping publication {i + 1} due to error: {pub_error}")
@@ -305,6 +508,11 @@ def fetch_scholar_data(author_id, start_year, end_year):
         papers.sort(key=lambda x: int(x['bib'].get('pub_year', 0)), reverse=True)
         
         st.write(f"Found {len(papers)} papers between {start_year} and {end_year}.")
+        
+        # Cache the results
+        if papers:
+            set_cached_results(cache_key, papers)
+        
         return papers
         
     except Exception as e:
@@ -325,9 +533,14 @@ st.write("Enter a Google Scholar author ID and a date range to fetch their paper
 col1, col2 = st.columns([3, 1])
 with col1:
     if proxy_setup_success:
-        st.success("✅ Proxy configured - Better protection against blocking")
+        proxy_info = f"✅ Proxy configured ({active_proxy_type}) - Better protection against blocking"
+        if SCRAPERAPI_KEY:
+            proxy_info += "\n🔑 ScraperAPI REST fallback available"
+        st.success(proxy_info)
+    elif SCRAPERAPI_KEY:
+        st.info("🔑 ScraperAPI REST API available as fallback")
     else:
-        st.warning("⚠️ No proxy configured - Higher risk of being blocked")
+        st.warning("⚠️ No proxy configured - Higher risk of being blocked. Set SCRAPERAPI_KEY env var for better reliability.")
 
 with col2:
     col2_1, col2_2 = st.columns(2)
@@ -342,7 +555,8 @@ with col2:
     with col2_2:
         if st.button("Clear Cache"):
             clear_scholarly_cache()
-            st.success("✅ Cache cleared!")
+            clear_results_cache()
+            st.success("✅ All caches cleared!")
 
 # Input for Google Scholar Author ID
 scholar_id = st.text_input("Google Scholar Author ID", "x12zA5gAAAAJ")
@@ -389,6 +603,10 @@ method = st.radio(
     help="Web scraping is more reliable when the scholarly library has issues"
 )
 
+# Cache control
+use_cache = st.checkbox("Use cached results (if available)", value=True, 
+                        help="Uncheck to force fresh data fetch. Cache expires after 1 hour.")
+
 if st.button("Fetch Papers"):
     if scholar_id:
         if start_year > end_year:
@@ -397,9 +615,20 @@ if st.button("Fetch Papers"):
             with st.spinner("Fetching data from Google Scholar..."):
                 if method == "Use Web Scraping Only":
                     st.info("Using web scraping method directly...")
-                    papers = fetch_scholar_data_alternative(scholar_id, start_year, end_year)
+                    # Check cache for web scraping method too
+                    cache_key = get_cache_key(scholar_id, start_year, end_year, 'webscraping')
+                    papers = None
+                    if use_cache:
+                        papers = get_cached_results(cache_key)
+                        if papers:
+                            st.success(f"✅ Loaded {len(papers)} papers from cache!")
+                    
+                    if not papers:
+                        papers = fetch_scholar_data_alternative(scholar_id, start_year, end_year)
+                        if papers:
+                            set_cached_results(cache_key, papers)
                 else:
-                    papers = fetch_scholar_data(scholar_id, start_year, end_year)
+                    papers = fetch_scholar_data(scholar_id, start_year, end_year, use_cache=use_cache)
             
             if papers:
                 st.success("Data fetched successfully!")
