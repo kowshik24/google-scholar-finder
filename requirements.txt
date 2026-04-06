@@ -9,4 +9,5 @@ requests
 beautifulsoup4
 selenium
 python-dotenv
-python-dotenv
+pandas
+tqdm

@@ -9,6 +9,7 @@ import re
 import traceback
 from urllib.parse import quote_plus
 from dotenv import load_dotenv
+import google_scholar_scraper as env_scholar_scraper
 
 # --- Load environment variables from .env file ---
 load_dotenv()
@@ -18,6 +19,22 @@ SCRAPERAPI_KEY = os.getenv('SCRAPERAPI_KEY', '')
 LUMINATI_USER = os.getenv('LUMINATI_USER', '')
 LUMINATI_PASS = os.getenv('LUMINATI_PASS', '')
 USE_FREE_PROXY_ONLY = os.getenv('USE_FREE_PROXY_ONLY', 'true').lower() == 'true'
+LOCAL_PROXY_URL = os.getenv('LOCAL_PROXY_URL', '').strip()
+MAX_DIRECT_RETRIES = int(os.getenv('MAX_DIRECT_RETRIES', '3'))
+MIN_REQUEST_DELAY = float(os.getenv('MIN_REQUEST_DELAY', '1.5'))
+MAX_REQUEST_DELAY = float(os.getenv('MAX_REQUEST_DELAY', '3.5'))
+DIRECT_TIMEOUT = int(os.getenv('DIRECT_TIMEOUT', '30'))
+DECODO_USERNAME = os.getenv('DECODO_USERNAME', '').strip()
+DECODO_PASSWORD = os.getenv('DECODO_PASSWORD', '').strip()
+SCRAPER_OUTPUT_CSV = os.getenv('OUTPUT_CSV', 'scholar_results.csv').strip()
+SCRAPER_FETCH_ABSTRACTS = os.getenv('FETCH_ABSTRACTS', 'true').lower() == 'true'
+
+USER_AGENTS = [
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
+]
 
 # --- Circuit Breaker State ---
 # Track proxy failures to skip consistently failing methods
@@ -31,6 +48,63 @@ if 'proxy_failures' not in st.session_state:
 
 CIRCUIT_BREAKER_THRESHOLD = 3  # failures before cooldown
 CIRCUIT_BREAKER_COOLDOWN = 300  # 5 minutes cooldown
+
+
+def get_http_session() -> requests.Session:
+    """Get or initialize a shared HTTP session for connection reuse."""
+    if 'http_session' not in st.session_state:
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=0)
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        st.session_state.http_session = session
+    return st.session_state.http_session
+
+
+def get_rotating_headers() -> dict:
+    """Return a realistic browser header set with rotating UA."""
+    ua = random.choice(USER_AGENTS)
+    accept_lang = random.choice(['en-US,en;q=0.9', 'en-GB,en;q=0.9', 'en-US,en;q=0.8'])
+    return {
+        'User-Agent': ua,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': accept_lang,
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Cache-Control': 'max-age=0',
+    }
+
+
+def maybe_refresh_free_proxy(reason: str = ''):
+    """Refresh free proxy setup after block-like failures."""
+    if not is_proxy_available('free_proxies'):
+        return
+    try:
+        st.write(f"Refreshing free proxy pool ({reason})...")
+        success, proxy_type = setup_proxy()
+        if success and proxy_type == 'free_proxies':
+            st.write("✅ Free proxy refreshed")
+        else:
+            st.write("⚠️ Free proxy refresh did not activate free proxy")
+    except Exception as e:
+        st.write(f"⚠️ Free proxy refresh failed: {e}")
+
+
+def should_treat_as_block(response: requests.Response) -> bool:
+    """Detect likely block/challenge responses from Scholar."""
+    if response.status_code in (403, 429, 503):
+        return True
+
+    text = (response.text or '').lower()
+    block_markers = [
+        'sorry',
+        'unusual traffic',
+        'detected unusual traffic',
+        'captcha',
+        '/sorry/',
+    ]
+    return any(marker in text for marker in block_markers)
 
 def is_proxy_available(proxy_type: str) -> bool:
     """Check if a proxy method is available (not in cooldown)"""
@@ -54,6 +128,34 @@ def record_proxy_failure(proxy_type: str):
 def record_proxy_success(proxy_type: str):
     """Reset failure count on success"""
     st.session_state.proxy_failures[proxy_type] = {'count': 0, 'cooldown_until': 0}
+
+
+def render_proxy_health_panel():
+    """Render current proxy/circuit-breaker health information."""
+    st.markdown("### 🩺 Proxy Health")
+
+    current_time = time.time()
+    proxy_state = st.session_state.get('proxy_failures', {})
+
+    rows = []
+    for proxy_name, state in proxy_state.items():
+        failures = state.get('count', 0)
+        cooldown_until = state.get('cooldown_until', 0)
+        in_cooldown = cooldown_until > current_time
+        remaining = max(0, int(cooldown_until - current_time)) if in_cooldown else 0
+
+        rows.append({
+            'Proxy Method': proxy_name,
+            'Failures': failures,
+            'Status': 'cooldown' if in_cooldown else 'active',
+            'Cooldown Left (s)': remaining,
+        })
+
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.caption(
+        f"Retries={MAX_DIRECT_RETRIES} | Delay={MIN_REQUEST_DELAY:.1f}-{MAX_REQUEST_DELAY:.1f}s | "
+        f"Timeout={DIRECT_TIMEOUT}s | FreeOnly={USE_FREE_PROXY_ONLY} | LocalProxy={'on' if LOCAL_PROXY_URL else 'off'}"
+    )
 
 # Set up a proxy to avoid getting blocked by Google Scholar
 def setup_proxy():
@@ -158,7 +260,8 @@ def get_with_scraperapi(url: str, timeout: int = 60) -> requests.Response:
     api_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={quote_plus(url)}"
     
     try:
-        response = requests.get(api_url, timeout=timeout)
+        session = get_http_session()
+        response = session.get(api_url, timeout=timeout)
         if response.status_code == 200:
             record_proxy_success('scraperapi_rest')
         else:
@@ -179,15 +282,8 @@ def fetch_page_with_fallback(url: str, headers: dict = None) -> requests.Respons
     1. ScraperAPI REST API (most reliable)
     2. Direct request with headers
     """
-    default_headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-    }
-    headers = headers or default_headers
+    session = get_http_session()
+    headers = headers or get_rotating_headers()
     
     # Try ScraperAPI REST API first (most reliable)
     if SCRAPERAPI_KEY and is_proxy_available('scraperapi_rest'):
@@ -200,10 +296,50 @@ def fetch_page_with_fallback(url: str, headers: dict = None) -> requests.Respons
                 st.warning(f"ScraperAPI returned status {response.status_code}, trying direct request...")
         except Exception as e:
             st.warning(f"ScraperAPI failed: {e}, trying direct request...")
+
+    # Optional local proxy endpoint (free self-hosted)
+    if LOCAL_PROXY_URL:
+        try:
+            st.write("Using local proxy endpoint...")
+            proxy_url = f"{LOCAL_PROXY_URL.rstrip('/')}/proxy"
+            response = session.get(proxy_url, params={'url': url}, headers=headers, timeout=max(45, DIRECT_TIMEOUT))
+            if response.status_code == 200 and not should_treat_as_block(response):
+                return response
+            st.warning(f"Local proxy returned status {response.status_code}, trying direct request...")
+        except Exception as e:
+            st.warning(f"Local proxy failed: {e}, trying direct request...")
     
-    # Fallback to direct request
-    time.sleep(random.uniform(2, 4))
-    return requests.get(url, headers=headers, timeout=30)
+    # Fallback to direct request with retries, jitter, and block detection
+    last_exception = None
+    for attempt in range(MAX_DIRECT_RETRIES):
+        try:
+            if attempt > 0:
+                delay = exponential_backoff(attempt, base=1.8, max_delay=12.0)
+                st.write(f"Retrying direct request in {delay:.1f}s (attempt {attempt + 1}/{MAX_DIRECT_RETRIES})...")
+                time.sleep(delay)
+            else:
+                time.sleep(random.uniform(MIN_REQUEST_DELAY, MAX_REQUEST_DELAY))
+
+            rotated_headers = headers.copy()
+            rotated_headers['User-Agent'] = random.choice(USER_AGENTS)
+            response = session.get(url, headers=rotated_headers, timeout=DIRECT_TIMEOUT)
+
+            if should_treat_as_block(response):
+                record_proxy_failure('free_proxies')
+                st.warning(f"Direct request appears blocked (status {response.status_code}).")
+                maybe_refresh_free_proxy(reason=f"status {response.status_code}")
+                continue
+
+            return response
+        except Exception as e:
+            last_exception = e
+            record_proxy_failure('free_proxies')
+            st.warning(f"Direct request failed on attempt {attempt + 1}: {e}")
+            maybe_refresh_free_proxy(reason="request exception")
+
+    if last_exception:
+        raise RuntimeError(f"Direct request failed after {MAX_DIRECT_RETRIES} attempts: {last_exception}")
+    raise RuntimeError(f"Direct request failed after {MAX_DIRECT_RETRIES} attempts")
 
 def fetch_scholar_data_alternative(author_id, start_year, end_year, max_pages=5):
     """
@@ -211,6 +347,61 @@ def fetch_scholar_data_alternative(author_id, start_year, end_year, max_pages=5)
     Supports pagination to fetch more than the first page of publications.
     Uses ScraperAPI REST API when available for better reliability.
     """
+    try:
+        st.write("Trying env-driven web scraping method...")
+
+        session = env_scholar_scraper.make_session(DECODO_USERNAME, DECODO_PASSWORD)
+        rows = env_scholar_scraper.scrape_author_cost_optimized(
+            session=session,
+            author_id=author_id,
+            start_year=int(start_year),
+            end_year=int(end_year),
+            fetch_abstracts=SCRAPER_FETCH_ABSTRACTS,
+            output_csv=SCRAPER_OUTPUT_CSV,
+        )
+
+        papers = []
+        for row in rows:
+            year_raw = row.get('Year')
+            try:
+                year_int = int(year_raw)
+            except (TypeError, ValueError):
+                continue
+
+            if year_int < int(start_year) or year_int > int(end_year):
+                continue
+
+            citations_raw = row.get('Citation Count', 0)
+            try:
+                citations_int = int(citations_raw)
+            except (TypeError, ValueError):
+                citations_int = 0
+
+            papers.append({
+                'bib': {
+                    'title': row.get('Title', ''),
+                    'pub_year': str(year_int),
+                    'author': row.get('Authors', 'Unknown authors'),
+                    'abstract': row.get('Abstract', 'No abstract available.'),
+                    'citation_count': citations_int,
+                },
+                'pub_url': row.get('Scholar URL', ''),
+                'num_citations': citations_int,
+            })
+
+        papers.sort(
+            key=lambda x: int(x['bib'].get('pub_year', 0)) if str(x['bib'].get('pub_year', '')).isdigit() else 0,
+            reverse=True
+        )
+
+        if papers:
+            st.success(f"Successfully extracted {len(papers)} publications using env-driven scraper!")
+            return papers
+
+        st.warning("Env-driven scraper returned no publications in the specified date range. Falling back...")
+    except Exception as primary_error:
+        st.warning(f"Env-driven scraper failed: {primary_error}. Falling back to legacy parser...")
+
     try:
         st.write("Trying alternative web scraping method...")
         
@@ -423,9 +614,12 @@ def fetch_scholar_data(author_id, start_year, end_year, use_cache=True):
                 
                 if author is not None and isinstance(author, dict):
                     st.write("✅ Author profile retrieved successfully!")
+                    record_proxy_success('free_proxies')
                     break
                 else:
                     st.warning(f"Attempt {attempt + 1} returned None or invalid data. Retrying...")
+                    record_proxy_failure('free_proxies')
+                    maybe_refresh_free_proxy(reason='invalid author payload')
                     if attempt < max_retries - 1:
                         delay = exponential_backoff(attempt)
                         st.write(f"Waiting {delay:.1f}s before retry...")
@@ -433,12 +627,16 @@ def fetch_scholar_data(author_id, start_year, end_year, use_cache=True):
                         
             except AttributeError as attr_error:
                 st.warning(f"Attempt {attempt + 1} failed with AttributeError: {attr_error}")
+                record_proxy_failure('free_proxies')
+                maybe_refresh_free_proxy(reason='attribute error')
                 if attempt < max_retries - 1:
                     delay = exponential_backoff(attempt)
                     st.write(f"Waiting {delay:.1f}s before retry...")
                     time.sleep(delay)
             except Exception as retry_error:
                 st.warning(f"Attempt {attempt + 1} failed: {retry_error}")
+                record_proxy_failure('free_proxies')
+                maybe_refresh_free_proxy(reason='author fetch error')
                 if attempt < max_retries - 1:
                     delay = exponential_backoff(attempt)
                     st.write(f"Waiting {delay:.1f}s before retry...")
@@ -557,6 +755,10 @@ with col2:
             clear_scholarly_cache()
             clear_results_cache()
             st.success("✅ All caches cleared!")
+
+# Proxy health panel
+with st.expander("📈 Proxy Health & Runtime Settings", expanded=False):
+    render_proxy_health_panel()
 
 # Input for Google Scholar Author ID
 scholar_id = st.text_input("Google Scholar Author ID", "x12zA5gAAAAJ")

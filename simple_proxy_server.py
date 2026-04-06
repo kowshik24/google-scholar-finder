@@ -9,6 +9,8 @@ import random
 import time
 from datetime import datetime
 import logging
+import certifi
+import os
 
 app = Flask(__name__)
 
@@ -28,6 +30,7 @@ USER_AGENTS = [
 # Rate limiting
 request_times = []
 MAX_REQUESTS_PER_MINUTE = 10
+PROXY_VERIFY_SSL = os.getenv('PROXY_VERIFY_SSL', 'false').lower() == 'true'
 
 def check_rate_limit():
     """Simple rate limiting"""
@@ -80,11 +83,14 @@ def proxy():
         }
         
         # Forward the request
+        verify_ssl = certifi.where() if PROXY_VERIFY_SSL else False
+
         if request.method == 'GET':
             response = requests.get(
                 target_url,
                 headers=headers,
                 timeout=30,
+                verify=verify_ssl,
                 allow_redirects=True
             )
         else:
@@ -93,6 +99,7 @@ def proxy():
                 headers=headers,
                 data=request.get_data(),
                 timeout=30,
+                verify=verify_ssl,
                 allow_redirects=True
             )
         
