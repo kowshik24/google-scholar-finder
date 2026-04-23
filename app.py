@@ -41,6 +41,7 @@ USER_AGENTS = [
 if 'proxy_failures' not in st.session_state:
     st.session_state.proxy_failures = {
         'free_proxies': {'count': 0, 'cooldown_until': 0},
+        'decodo': {'count': 0, 'cooldown_until': 0},
         'luminati': {'count': 0, 'cooldown_until': 0},
         'scraperapi_proxy': {'count': 0, 'cooldown_until': 0},
         'scraperapi_rest': {'count': 0, 'cooldown_until': 0},
@@ -157,6 +158,26 @@ def render_proxy_health_panel():
         f"Timeout={DIRECT_TIMEOUT}s | FreeOnly={USE_FREE_PROXY_ONLY} | LocalProxy={'on' if LOCAL_PROXY_URL else 'off'}"
     )
 
+
+def build_decodo_proxy_url() -> str:
+    """Build the Decodo residential proxy URL from env credentials."""
+    return f"http://{DECODO_USERNAME}:{DECODO_PASSWORD}@gate.decodo.com:10001"
+
+
+def configure_scholarly_session(proxies: dict | None = None):
+    """Force scholarly to use a fresh requests session, optionally with proxies."""
+    session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=0)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    session.headers.update(get_rotating_headers())
+    if proxies:
+        session.proxies.update(proxies)
+
+    if hasattr(scholarly, '_proxy_generator'):
+        scholarly._proxy_generator = None
+    scholarly._SCHOLARLY_SESSION = session
+
 # Set up a proxy to avoid getting blocked by Google Scholar
 def setup_proxy():
     try:
@@ -179,6 +200,22 @@ def setup_proxy():
                 except Exception as e:
                     print(f"ScraperAPI proxy failed: {e}")
                     record_proxy_failure('scraperapi_proxy')
+
+            # Try Decodo residential proxy before legacy Bright Data/Luminati.
+            if not success and DECODO_USERNAME and DECODO_PASSWORD and is_proxy_available('decodo'):
+                try:
+                    decodo_proxy = build_decodo_proxy_url()
+                    configure_scholarly_session({
+                        'http': decodo_proxy,
+                        'https': decodo_proxy,
+                    })
+                    print("Decodo proxy setup successful")
+                    proxy_type = 'decodo'
+                    record_proxy_success('decodo')
+                    return True, 'decodo'
+                except Exception as e:
+                    print(f"Decodo proxy failed: {e}")
+                    record_proxy_failure('decodo')
             
             # Try Luminati proxy if ScraperAPI fails
             if not success and LUMINATI_USER and LUMINATI_PASS and is_proxy_available('luminati'):
@@ -227,6 +264,8 @@ def clear_scholarly_cache():
             scholarly._cache.clear()
         if hasattr(scholarly, '_proxy_generator'):
             scholarly._proxy_generator = None
+        if hasattr(scholarly, '_SCHOLARLY_SESSION'):
+            scholarly._SCHOLARLY_SESSION = None
         print("Scholarly cache cleared")
     except Exception as e:
         print(f"Failed to clear cache: {e}")
@@ -358,6 +397,7 @@ def fetch_scholar_data_alternative(author_id, start_year, end_year, max_pages=5)
             end_year=int(end_year),
             fetch_abstracts=SCRAPER_FETCH_ABSTRACTS,
             output_csv=SCRAPER_OUTPUT_CSV,
+            use_cache=False,
         )
 
         papers = []

@@ -202,10 +202,15 @@ def fetch_abstract_from_detail(session, scholar_url):
     return "No abstract available."
 
 
-def scrape_author_cost_optimized(session, author_id, start_year, end_year, fetch_abstracts, output_csv):
-    cache_df = load_existing(output_csv)
-    existing_titles = set(cache_df["Title"].dropna().map(normalize_title).tolist())
-    final_res = cache_df.to_dict(orient="records")
+def scrape_author_cost_optimized(session, author_id, start_year, end_year, fetch_abstracts, output_csv, use_cache=True):
+    if use_cache:
+        cache_df = load_existing(output_csv)
+        existing_titles = set(cache_df["Title"].dropna().map(normalize_title).tolist())
+        final_res = cache_df.to_dict(orient="records")
+    else:
+        existing_titles = set()
+        final_res = []
+        print("Cache disabled for scraper run; fetching fresh Google Scholar data.")
 
     author_name, all_rows = fetch_all_publications(session, author_id)
     print(f"Author: {author_name}")
@@ -225,9 +230,9 @@ def scrape_author_cost_optimized(session, author_id, start_year, end_year, fetch
 
         filtered.append(row)
 
-    print(f"New publications in {start_year}-{end_year}: {len(filtered)}")
+    print(f"Publications selected in {start_year}-{end_year}: {len(filtered)}")
     if not filtered:
-        print("Nothing new to scrape.")
+        print("Nothing to scrape for the requested range.")
         return final_res
 
     unsaved = 0
@@ -243,7 +248,7 @@ def scrape_author_cost_optimized(session, author_id, start_year, end_year, fetch
             existing_titles.add(normalize_title(pub["Title"]))
             unsaved += 1
 
-            if unsaved >= SAVE_EVERY_N:
+            if output_csv and unsaved >= SAVE_EVERY_N:
                 save_rows(final_res, output_csv)
                 unsaved = 0
 
@@ -252,7 +257,8 @@ def scrape_author_cost_optimized(session, author_id, start_year, end_year, fetch
             print(f"Skipping '{pub.get('Title', 'N/A')}' due to error: {err}")
             ghum(1.5, 2.5)
 
-    save_rows(final_res, output_csv)
+    if output_csv:
+        save_rows(final_res, output_csv)
     return final_res
 
 
@@ -265,6 +271,7 @@ def main():
         end_year=END_YEAR,
         fetch_abstracts=FETCH_ABSTRACTS,
         output_csv=OUTPUT_CSV,
+        use_cache=False,
     )
 
     data_in_range = []
